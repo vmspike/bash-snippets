@@ -1,71 +1,87 @@
 #!/bin/bash
 
-## qsort's based on http://stackoverflow.com/a/30576368/4629599
+##
+# Usage for all functions in this library which return something:
+#     function_name [-v var] function_opts_and_agrs ...
+# If '-v var' present result will be assigned to the variable name 'var'
+# instead of printing to stdout (as in bash printf function).
+# 'var' must not have the same name as function local variables!
+##
+
 
 ##
-# Sorts positional arguments using iterative quicksort
-# Globals:
-#   QSORTED
-# Returns:
-#   QSORTED (array)
-# Note:
-#   Iterative (preferred for small number of elements ~<10)
+# Exit with optional message to stderr
 ##
-iqsort() {
+quit() {
+    [[ $2 ]] && echo "$2" >&2
+    exit "$1"
+}
+
+
+##
+# Sort positional arguments using iterative quicksort
+# Note: preferred for small number of elements ~<10
+# TODO: verify
+##
+qsort_i() {
     (($#==0)) && return 0
-    local stack beg end i pivot smaller larger
-    stack=( 0 $(($#-1)) )
-    QSORTED=("$@")
-    while ((${#stack[@]})); do
-        beg=${stack[0]}
-        end=${stack[1]}
-        stack=("${stack[@]:2}")
-        smaller=()
-        larger=()
-        pivot=${QSORTED[beg]}
-        for ((i=beg+1;i<=end;++i)); do
-            if [[ "${QSORTED[i]}" < "${pivot}" ]]; then
-                smaller+=("${QSORTED[i]}")
+    local _var _res _stack _beg _end _i _pivot _smaller _larger
+    if [[ $1 == '-v' ]]; then _var=$2; shift 2; fi
+
+    _stack=( 0 $(($#-1)) )
+    _res=("$@")
+    while ((${#_stack[@]})); do
+        _beg=${_stack[0]}
+        _end=${_stack[1]}
+        _stack=("${_stack[@]:2}")
+        _smaller=()
+        _larger=()
+        _pivot=${_res[_beg]}
+        for ((_i=_beg+1;_i<=_end;++_i)); do
+            if [[ "${_res[_i]}" < "${_pivot}" ]]; then
+                _smaller+=("${_res[_i]}")
             else
-                larger+=("${QSORTED[i]}")
+                _larger+=("${_res[_i]}")
             fi
         done
-        QSORTED=("${QSORTED[@]:0:beg}" "${smaller[@]}" "$pivot" "${larger[@]}" "${QSORTED[@]:end+1}")
-        if ((${#smaller[@]}>=2)); then stack+=("$beg" "$((beg+${#smaller[@]}-1))"); fi
-        if ((${#larger[@]}>=2)); then stack+=("$((end-${#larger[@]}+1))" "$end"); fi
+        _res=("${_res[@]:0:_beg}" "${_smaller[@]}" "${_pivot}" "${_larger[@]}" "${_res[@]:_end+1}")
+        ((${#_smaller[@]}>=2)) && _stack+=("${_beg}" "$((_beg+${#_smaller[@]}-1))")
+        ((${#_larger[@]}>=2)) && _stack+=("$((_end-${#_larger[@]}+1))" "${_end}")
     done
+
+    if [[ ${_var} ]]; then eval "${_var}=\${_res[@]}"; else echo "${_res[@]}"; fi
 }
 
 
 ##
 # Sorts positional arguments using recursive quicksort
-# Globals:
-#   QSORTED
-# Returns:
-#   QSORTED (array)
-# Note:
-#   Recursive (preferred for large number of elements ~>10)
+# Note: preferred for large number of elements ~>10
+# TODO: verify
 ##
-rqsort() {
+qsort_r() {
     (($#==0)) && return 0
-    local pivot i smaller larger
-    smaller=()
-    larger=()
-    QSORTED=()
-    pivot=$1
+    local _var _res _i _pivot _smaller _larger
+    if [[ $1 == '-v' ]]; then _var=$2; shift 2; fi
+
+    _smaller=()
+    _larger=()
+    _res=()
+    _pivot=$1
     shift
-    for i; do
-        if [[ $i < $pivot ]]; then
-            smaller+=( "$i" )
+    for _i; do
+        if [[ ${_i} < ${_pivot} ]]; then
+            _smaller+=( "${_i}" )
         else
-            larger+=( "$i" )
+            _larger+=( "${_i}" )
         fi
     done
-    qsort "${smaller[@]}"
-    smaller=("${QSORTED[@]}")
-    qsort "${larger[@]}"
-    larger=("${QSORTED[@]}")
-    QSORTED=("${smaller[@]}" "$pivot" "${larger[@]}")
+    qsort_r "${_smaller[@]}"
+    _smaller=("${_res[@]}")
+    qsort_r "${larger[@]}"
+    _larger=("${_res[@]}")
+    _res=("${_smaller[@]}" "${_pivot}" "${_larger[@]}")
+
+    if [[ ${_var} ]]; then eval "${_var}=(\${_res[@]})"; else echo "${_res[@]}"; fi
 }
 
 
@@ -80,6 +96,7 @@ rqsort() {
 # Globals:
 #   BWGET_HEADER
 #   BWGET_BODY
+# TODO: adopt to [-v var] usage
 ##
 bwget() {
     unset BWGET_HEADER BWGET_BODY
@@ -151,4 +168,125 @@ bwget() {
     # echo -n "${BWGET_BODY}"
 
     return ${rval:=0}
+}
+
+
+##
+# Convert decimal number to IPv4 address
+##
+dec2ip() {
+    local _var _res _e _dot _octet _dec
+    if [[ $1 == '-v' ]]; then _var=$2; shift 2; fi
+
+    _dec=$1
+    for _e in {3..0}; do
+        (( _octet = _dec/256**_e ))
+        (( _dec -= _octet*256**_e ))
+        _res+=${_dot}${_octet}
+        _dot=.
+    done
+
+    if [[ ${_var} ]]; then eval "${_var}=\${_res}"; else echo "${_res}"; fi
+}
+
+
+##
+# Convert IPv4 address to decimal number
+##
+ip2dec() {
+    local _var _res _a _b _c _d
+    if [[ $1 == '-v' ]]; then _var=$2; shift 2; fi
+
+    IFS=. read -r _a _b _c _d <<<"$1"
+    (( _res = _a*256**3 + _b*256**2 + _c*256 + _d ))
+
+    if [[ ${_var} ]]; then eval "${_var}=\${_res}"; else echo "${_res}"; fi
+}
+
+
+##
+# Convert IPv4 MASK to CIDR
+# Assumes that MASK have no gaps.
+##
+mask2cidr() {
+    local _var _res _x
+    if [[ $1 == '-v' ]]; then _var=$2; shift 2; fi
+
+    _x=${1##*255.}
+    set -- 0^^^128^192^224^240^248^252^254^ $(( (${#1}-${#_x})*2 )) "${_x%%.*}"
+    _x=${1%%$3*}
+    (( _res = $2 + ${#_x}/4 ))
+
+    if [[ ${_var} ]]; then eval "${_var}=\${_res}"; else echo "${_res}"; fi
+}
+
+
+##
+# Convert CIDR to IPv4 MASK
+##
+cidr2mask() {
+    local _var _res
+    if [[ $1 == '-v' ]]; then _var=$2; shift 2; fi
+    [[ -z $1 ]] && set 0
+
+    set -- $(( 5-($1/8) )) 255 255 255 255 $(( (255<<(8 - ($1%8)))&255 )) 0 0 0
+    if (($1 > 1)); then shift "$1"; else shift; fi
+    _res=${1:-0}.${2:-0}.${3:-0}.${4:-0}
+
+    if [[ ${_var} ]]; then eval "${_var}=\${_res}"; else echo "${_res}"; fi
+}
+
+
+##
+# Return next subnet with the same size
+# Subnet format is IPv4/CIDR
+##
+next_subnet() {
+    local _var _res _ip _cidr _size _ip_dec _ip_next
+    if [[ $1 == '-v' ]]; then _var=$2; shift 2; fi
+
+    _ip=${1%/*}
+    _cidr=${1#*/}
+    (( _size = 2**(32-_cidr) ))  # all IPs count inside subnet e.g. /29 size is 8
+    ip2dec -v _ip_dec "${_ip}"
+    dec2ip -v _ip_next $((_size+_ip_dec))
+    _res=${_ip_next}/${_cidr}
+
+    if [[ ${_var} ]]; then eval "${_var}=\${_res}"; else echo "${_res}"; fi
+}
+
+
+##
+# Return next IPv4 address
+##
+next_ip() {
+    local _var _res _ip
+    if [[ $1 == '-v' ]]; then _var=$2; shift 2; fi
+
+    ip2dec -v _ip "$1"
+    dec2ip -v _ip $((_ip+1))
+    _res=${_ip}
+
+    if [[ ${_var} ]]; then eval "${_var}=\${_res}"; else echo "${_res}"; fi
+}
+
+
+##
+# Validate IPv4 address
+# Note: this is invalid address: 192.168.000.001
+##
+validate_ip4() {
+    local _re
+    _re='^(([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$'
+    [[ "$1" =~ ${_re} ]] && return 0 || return 1
+}
+
+
+##
+# Validate IPv4/CIDR
+##
+validate_ip4cidr() {
+    local _re
+    _re='^(([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\/([0-9]|[1-2][0-9]|3[0-2])$'
+    [[ "$1" =~ ${_re} ]] && return 0 || return 1
 }
