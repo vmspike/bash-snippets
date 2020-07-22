@@ -1,21 +1,28 @@
 #!/bin/bash
 
 ##
-# Usage for all functions in this library which return something:
-#     function_name [-v VAR] opts_and_agrs...
-# If `-v VAR` present result will be assigned to the variable name "VAR"
-# instead of printing to stdout (as in bash printf function).
-# VAR must not have the same name as function local variables, to simplilfy
-# usage local variables in most cases starts with underscore.
+# Usage for most functions in this library which return something:
+#   somefunc [-v VAR] agrs...
+# If `-v foo` present the result will be assigned to the variable named "foo"
+# (if the variable is unset global variable will be declared), othervise will
+# be printed to stdout.
 ##
 
 
 ##
 # Exit with optional message to stderr
+# Example:
+#   quit 1 Some error occured
 ##
 quit() {
-    [[ -n $2 ]] && echo "$2" >&2
-    exit "$1"
+    if [[ -n "${*:2}" ]]; then
+        if (($1==0)); then
+            printf '%s\n' "${*:2}"
+        else
+            printf '%s\n' "${*:2}" >&2
+        fi
+    fi
+    exit "${1:-0}"
 }
 
 
@@ -149,7 +156,7 @@ qsort() {
 ##
 # Bash native simple alternative to curl/wget
 # Set BWGET_* variables
-# Support only few HTTP/1.1 features! No https, no compression, etc.
+# Supports only few HTTP/1.1 features! No https, no compression, etc.
 # Chunks join on 'Transfer-Encoding: chunked' is implemented but not properly tested.
 # Args:
 #   http url
@@ -233,195 +240,277 @@ bwget() {
 
 
 ##
-# Convert decimal number to IPv4 address
+# Converts decimal number to IPv4 address.
+# Usage: dec2ip [-v VAR] IPv4ASANUMBER
 ##
 dec2ip() {
-    local var res e octet dec
-    if [[ $1 == '-v' ]]; then var=$2; shift 2; fi
+    local _res _ip
 
-    dec=$1
-    for e in {3..0}; do
-        (( octet = dec/256**e ))
-        (( dec -= octet*256**e ))
-        res+=.${octet}
-    done
-    res=${res:1}
-
-    if [[ -n ${var} ]]; then
-        declare -g "${var}"
-        printf -v "${var}" '%s' "${res}"
+    if [[ "$1" == '-v' ]]; then
+        [[ -v "$2" ]] || declare -g "$2"
+        local -n _res=$2
+        shift 2
     else
-        echo "${res}"
+        local _res
     fi
+
+    _ip=$1
+    _res=$((_ip%256))
+    ((_ip>>=8))
+    _res=$((_ip%256)).${_res}
+    ((_ip>>=8))
+    _res=$((_ip%256)).${_res}
+    ((_ip>>=8))
+    _res=$((_ip%256)).${_res}
+
+    [[ -R _res ]] || printf '%s\n' "${_res}"
 }
 
 
 ##
-# Convert IPv4 address to decimal number
+# Converts IPv4 address to decimal number.
+# Usage: ip2dec [-v VAR] IPv4
 ##
 ip2dec() {
-    local var res a b c d
-    if [[ $1 == '-v' ]]; then var=$2; shift 2; fi
-
-    IFS=. read -r a b c d <<<"$1"
-    (( res = a*256**3 + b*256**2 + c*256 + d ))
-
-    if [[ -n ${var} ]]; then
-        declare -g "${var}"
-        printf -v "${var}" '%s' "${res}"
+    if [[ "$1" == '-v' ]]; then
+        [[ -v "$2" ]] || declare -g "$2"
+        local -n _res=$2
+        shift 2
     else
-        echo "${res}"
+        local _res
     fi
+
+    IFS=. read -ra _res <<<"$1"
+    (( _res = _res[0]*16777216 + _res[1]*65536 + _res[2]*256 + _res[3] ))
+
+    [[ -R _res ]] || printf '%s\n' "${_res}"
 }
 
 
 ##
-# Convert IPv4 MASK to CIDR
-# Assumes that MASK have no gaps.
+# Converts IPv4 MASK to CIDR.
+# Assumes that MASK has no gaps.
+# Usage: mask2cidr [-v VAR] MASK
 ##
 mask2cidr() {
-    local var res x
-    if [[ $1 == '-v' ]]; then var=$2; shift 2; fi
+    local _x
 
-    x=${1##*255.}
-    set -- 0^^^128^192^224^240^248^252^254^ $(( (${#1}-${#x})*2 )) "${x%%.*}"
-    x=${1%%$3*}
-    (( res = $2 + ${#x}/4 ))
-
-    if [[ -n ${var} ]]; then
-        declare -g "${var}"
-        printf -v "${var}" '%s' "${res}"
+    if [[ "$1" == '-v' ]]; then
+        [[ -v "$2" ]] || declare -g "$2"
+        local -n _res=$2
+        shift 2
     else
-        echo "${res}"
+        local _res
     fi
+
+    _x=${1##*255.}
+    set -- 0^^^128^192^224^240^248^252^254^ $(( (${#1}-${#_x})*2 )) "${_x%%.*}"
+    _x=${1%%$3*}
+    (( _res = $2 + ${#_x}/4 ))
+
+    [[ -R _res ]] || printf '%s\n' "${_res}"
 }
 
 
 ##
-# Convert CIDR to IPv4 MASK
+# Converts CIDR to IPv4 MASK.
+# Usage: cidr2mask [-v VAR] CIDR
 ##
 cidr2mask() {
-    local var res
-    if [[ $1 == '-v' ]]; then var=$2; shift 2; fi
+    if [[ "$1" == '-v' ]]; then
+        [[ -v "$2" ]] || declare -g "$2"
+        local -n _res=$2
+        shift 2
+    else
+        local _res
+    fi
+
     [[ -z $1 ]] && set 0
 
     set -- $(( 5-($1/8) )) 255 255 255 255 $(( (255<<(8 - ($1%8)))&255 )) 0 0 0
     if (($1 > 1)); then shift "$1"; else shift; fi
-    res=${1:-0}.${2:-0}.${3:-0}.${4:-0}
+    _res=${1:-0}.${2:-0}.${3:-0}.${4:-0}
 
-    if [[ -n ${var} ]]; then
-        declare -g "${var}"
-        printf -v "${var}" '%s' "${res}"
-    else
-        echo "${res}"
-    fi
+    [[ -R _res ]] || printf '%s\n' "${_res}"
 }
 
 
 ##
-# Return next subnet with the same size
-# Subnet format is IPv4/CIDR
+# Returns next IPv4 subnet with the same size.
+# Usage: next_subnet [-v VAR] IPv4[/CIDR]
+# If CIDR is not specified defaults to 32 and the result will have no CIDR as well.
 ##
 next_subnet() {
-    local var res ip cidr size ip_dec ip_next
-    if [[ $1 == '-v' ]]; then var=$2; shift 2; fi
+    local _ip _cidr
 
-    ip=${1%/*}
-    cidr=${1#*/}
-    (( size = 2**(32-cidr) ))  # all IPs count inside subnet e.g. /29 size is 8
-    ip2dec -v ip_dec "${ip}"
-    dec2ip -v ip_next $((size+ip_dec))
-    res=${ip_next}/${cidr}
-
-    if [[ -n ${var} ]]; then
-        declare -g "${var}"
-        printf -v "${var}" '%s' "${res}"
+    if [[ "$1" == '-v' ]]; then
+        [[ -v "$2" ]] || declare -ag "$2"
+        local -n _res=$2
+        shift 2
     else
-        echo "${res}"
+        local -a _res
     fi
+
+    IFS=/ read -r _ip _cidr <<<"$1"
+    if [[ -z ${_cidr} ]]; then
+        _cidr=('' 1)
+    else
+        _cidr=("${_cidr[0]}" "$((2**(32-_cidr[0])))")
+    fi
+
+    IFS=. read -ra _ip <<<"${_ip}"
+    (( _ip = _ip[0]*16777216 + _ip[1]*65536 + _ip[2]*256 + _ip[3] ))
+
+    _ip=$((_cidr[1]+_ip[0]))
+    _res=$((_ip%256))
+    ((_ip>>=8))
+    _res=$((_ip%256)).${_res}
+    ((_ip>>=8))
+    _res=$((_ip%256)).${_res}
+    ((_ip>>=8))
+    _res=$((_ip%256)).${_res}
+
+    [[ -n ${_cidr[0]} ]] && _res+=/${_cidr[0]}
+
+    [[ -R _res ]] || printf '%s\n' "${_res[0]}"
 }
 
 
 ##
-# Return next IPv4 address
-##
-next_ip() {
-    local var res ip
-    if [[ $1 == '-v' ]]; then var=$2; shift 2; fi
-
-    ip2dec -v ip "$1"
-    dec2ip -v ip $((ip+1))
-    res=${ip}
-
-    if [[ -n ${var} ]]; then
-        declare -g "${var}"
-        printf -v "${var}" '%s' "${res}"
-    else
-        echo "${res}"
-    fi
-}
-
-
-##
-# Validate IPv4 address
+# Validates IPv4 address.
 # Note: this is invalid address: 192.168.000.001
 ##
 validate_ip4() {
-    local re
-    re='^(([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$'
-    [[ "$1" =~ ${re} ]] && return 0 || return 1
+    local _re
+    _re='^(([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$'
+    [[ "$1" =~ ${_re} ]] && return 0 || return 1
 }
 
 
 ##
-# Validate IPv4/CIDR
+# Validates IPv4/CIDR.
 ##
 validate_ip4cidr() {
-    local re
-    re='^(([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\/([0-9]|[1-2][0-9]|3[0-2])$'
-    [[ "$1" =~ ${re} ]] && return 0 || return 1
+    local _re
+    _re='^(([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\/([0-9]|[1-2][0-9]|3[0-2])$'
+    [[ "$1" =~ ${_re} ]] && return 0 || return 1
 }
 
 ##
-# Generate random string with desired length from specified source
+# Generates pseudorandom string with desired length from specified source.
 # Usage: bpwgen [-v VAR] LEN SRC
-# Default LEN is 8
-# Default SRC is alphanumeric latin letters
-# If SRC starts with - and such option exists it has special meaning
+# Default LEN is 8.
+# Default SRC is alphanumeric latin letters.
+# If SRC starts with - and such option exists it has special meaning.
 ##
 bpwgen() {
-    local var src sl len i res
-    if [[ $1 == '-v' ]]; then var=$2; shift 2; fi
-    [[ -n "$1" ]] && len=$1 || len=8  # No check
-    # [[ "$1" =~ ^[0-9]+$ ]] && len=$1 || len=8  # Regex check
-    # (($1)) && len=$1 || len=8  # ARITHMETIC EVALUATION check
+    local _src _sl _len _i
+
+    if [[ "$1" == '-v' ]]; then
+        [[ -v "$2" ]] || declare -g "$2"
+        local -n _res=$2
+        shift 2
+    else
+        local _res
+    fi
+
+    [[ -n "$1" ]] && _len=$1 || _len=8  # No check
     case "$2" in
         ''|-an|--alphanumeric)  # Default
-            src='0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';;
+            _src='0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';;
         -a|--alpha)
-            src='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';;
+            _src='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';;
         -n|--numeric)
-            src='0123456789';;
+            _src='0123456789';;
         -b|--no-ambiguous)
-            src='2345679abcdefghjkmnpqrstuvwxyzACEFGHJKLMNPRSTUVWXYZ';;
+            _src='2345679abcdefghjkmnpqrstuvwxyzACEFGHJKLMNPRSTUVWXYZ';;
         -l|--lowercase)
-            src='0123456789abcdefghijklmnopqrstuvwxyz';;
+            _src='0123456789abcdefghijklmnopqrstuvwxyz';;
         -u|--uppercase)
-            src='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';;
+            _src='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';;
         -s|--secure)
-            src='!"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~'\';;
-        *)  # Custom
-            src=$2;;
+            _src='!"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~'\';;
+        *) _src=$2
     esac
-    sl=${#src}
-    for ((i=0;i<len;i++)); do
-        res+=${src:$((RANDOM%sl)):1}
+    _sl=${#_src}
+    for ((_i=0;_i<_len;_i++)); do
+        _res+=${_src:$((RANDOM%_sl)):1}
     done
 
-    if [[ -n ${var} ]]; then
-        declare -g "${var}"
-        printf -v "${var}" '%s' "${res}"
+    [[ -R _res ]] || printf '%s\n' "${_res}"
+}
+
+
+##
+# Returns array of network interface IP addresses.
+# If no VAR specified, print space separated line.
+# Depends on: ip (except -6 specified)
+# Usage: get_ip [-v VAR] [-4|-6] IFACE
+##
+get_ip() {
+    local _inet _iface _ip _x _i _seq
+
+    if [[ "$1" == '-v' ]]; then
+        [[ -v "$2" ]] || declare -ag "$2"
+        local -n _res=$2
+        shift 2
     else
-        echo "${res}"
+        local -a _res
     fi
+
+    case "$1" in
+        -4|-6) _inet=$1; shift;;
+        *) _inet=''
+    esac
+    _iface=$1
+
+    if [[ "${_inet}" == '-6' && -r /proc/net/if_inet6 ]]; then
+        # For ipv6-only use /proc/net/if_inet6 instead of parsing ip output
+        _i=0
+        while IFS=' ' read -r _ip _x _x _x _x _x; do
+            if [[ "${_x}" == "${_iface}" ]]; then
+                # Full colon separated representation
+                _ip="${_ip:0:4}:${_ip:4:4}:${_ip:8:4}:${_ip:12:4}:${_ip:16:4}:${_ip:20:4}:${_ip:24:4}:${_ip:28:4}"
+
+                # Compress the longest 0-nibble sequence
+                _x=${_ip}  # Clone the value
+                _seq=0000:0000:0000:0000:0000:0000:0000  # Start with 7 nibbles
+                while [[ -n ${_seq} ]]; do
+                    # Can lead to single leading or trailing : instead of :: if _seq is in the edge
+                    _ip=${_ip/${_seq}}
+
+                    if [[ "${_ip}" == "${_x}" ]]; then
+                        # Not found, truncate one nibble
+                        _seq=${_seq:5}
+                        continue
+                    fi
+
+                    # Restore edge colon if missed
+                    if [[ "${_ip::1}" == ':' ]]; then
+                        _ip=":${_ip}"  # Restore leading colon
+                    elif [[ "${_ip: -1}" == ':' ]]; then
+                        _ip+=':'  # Restore trailing colon
+                    fi
+                    break  # The longest sequence compressed
+                done
+
+                # Remove leading zeroes in each nibble if any
+                _ip=":${_ip}"
+                _ip=${_ip//:00/:}
+                _ip=${_ip//:0/:}
+                _ip=${_ip:1}
+
+                _res[$((_i++))]=${_ip}
+            fi
+        done </proc/net/if_inet6
+    else
+        # Parse ip output
+        _i=0
+        # shellcheck disable=2034
+        while IFS=' /' read -r _x _x _x _ip _x; do
+            _res[$((_i++))]=${_ip}
+        done <<<"$(exec -c ip ${_inet} -o addr show "${_iface}")"
+    fi
+
+    [[ -R _res ]] || printf '%s\n' "${_res[*]}"
 }
