@@ -3,9 +3,9 @@
 ##
 # Usage for most functions in this library which return something:
 #   somefunc [-v VAR] agrs...
-# If `-v foo` present the result will be assigned to the variable named "foo"
-# (if the variable is unset global variable will be declared), othervise will
-# be printed to stdout.
+# If `-v foo` specified the result will be assigned to the variable named "foo"
+# (if the variable is unset global variable will be declared), othervise the
+# result will be printed to stdout.
 ##
 
 
@@ -13,7 +13,6 @@
 # Exit with optional message to stderr
 # Example:
 #   quit 1 Some error occured
-##
 quit() {
     if [[ -n "${*:2}" ]]; then
         if (($1==0)); then
@@ -24,6 +23,27 @@ quit() {
     fi
     exit "${1:-0}"
 }
+
+
+##
+# Log depends on bash version
+##
+# Bash version in numbers like 4003046, where 4 is major version, 003 is minor, 046 is subminor.
+printf -v _bash_version '%d%03d%03d' ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]} ${BASH_VERSINFO[2]}
+_log_ts_format='%Y-%m-%dT%H:%M:%S'
+if ((_bash_version >= 5000000)); then
+log() {  # For bash 5.0+ with microseconds granularity. If not required use seconds only version of bash 4.2+
+    printf "%(${_log_ts_format})T.%s %6d %s\n" ${EPOCHREALTIME/./ } $$ "$*"
+}
+elif ((_bash_version > 4002000)); then
+log() {  # Fast (builtin) but sec is min sample for most implementations
+    printf "%(${_log_ts_format})T %6d %s\n" '-1' $$ "$*"  # %b convert escapes, %s print as is
+}
+else
+log() {  # Slow (subshell, date) but support nanoseconds and legacy bash versions
+    echo -E "$(exec -c date +"${_log_ts_format}") $$ $*"
+}
+fi
 
 
 ##
@@ -40,7 +60,6 @@ quit() {
 # Example:
 #   # Sort numerical array ARR in reverse and put result to the array RES
 #   qsort -vnr RES "${ARR[@]}"
-##
 qsort() {
     local opt var res i pivot smaller larger reverse=0
     local operator='<'  # Sort lexicographically using the current locale
@@ -165,7 +184,6 @@ qsort() {
 #   BWGET_HEADER
 #   BWGET_BODY
 # TODO: adopt to [-v var] usage
-##
 bwget() {
     unset BWGET_HEADER BWGET_BODY
     local LC_ALL RAW_RESPONSE BR HTTP_VERSION HTTP_URL HTTP_HOST HTTP_PORT HTTP_GET HTTP_GET_MORE_OPTS bwget_body_tmp o chunk_sz body_shift rval
@@ -242,7 +260,6 @@ bwget() {
 ##
 # Converts decimal number to IPv4 address.
 # Usage: dec2ip [-v VAR] IPv4ASANUMBER
-##
 dec2ip() {
     local _res _ip
 
@@ -270,7 +287,6 @@ dec2ip() {
 ##
 # Converts IPv4 address to decimal number.
 # Usage: ip2dec [-v VAR] IPv4
-##
 ip2dec() {
     if [[ "$1" == '-v' ]]; then
         [[ -v "$2" ]] || declare -g "$2"
@@ -291,7 +307,6 @@ ip2dec() {
 # Converts IPv4 MASK to CIDR.
 # Assumes that MASK has no gaps.
 # Usage: mask2cidr [-v VAR] MASK
-##
 mask2cidr() {
     local _x
 
@@ -315,7 +330,6 @@ mask2cidr() {
 ##
 # Converts CIDR to IPv4 MASK.
 # Usage: cidr2mask [-v VAR] CIDR
-##
 cidr2mask() {
     if [[ "$1" == '-v' ]]; then
         [[ -v "$2" ]] || declare -g "$2"
@@ -339,7 +353,6 @@ cidr2mask() {
 # Returns next IPv4 subnet with the same size.
 # Usage: next_subnet [-v VAR] IPv4[/CIDR]
 # If CIDR is not specified defaults to 32 and the result will have no CIDR as well.
-##
 next_subnet() {
     local _ip _cidr
 
@@ -379,7 +392,6 @@ next_subnet() {
 ##
 # Validates IPv4 address.
 # Note: this is invalid address: 192.168.000.001
-##
 validate_ip4() {
     local _re
     _re='^(([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$'
@@ -389,7 +401,6 @@ validate_ip4() {
 
 ##
 # Validates IPv4/CIDR.
-##
 validate_ip4cidr() {
     local _re
     _re='^(([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\/([0-9]|[1-2][0-9]|3[0-2])$'
@@ -402,7 +413,6 @@ validate_ip4cidr() {
 # Default LEN is 8.
 # Default SRC is alphanumeric latin letters.
 # If SRC starts with - and such option exists it has special meaning.
-##
 bpwgen() {
     local _src _sl _len _i
 
@@ -446,7 +456,6 @@ bpwgen() {
 # If no VAR specified, print space separated line.
 # Depends on: ip (except -6 specified)
 # Usage: get_ip [-v VAR] [-4|-6] IFACE
-##
 get_ip() {
     local _inet _iface _ip _x _i _seq
 
@@ -514,3 +523,73 @@ get_ip() {
 
     [[ -R _res ]] || printf '%s\n' "${_res[*]}"
 }
+
+##
+# Read the file(s) content to stdout deallocating already read blocks on the fly
+# reducing effective file size on a filesystem during the read.
+#
+# One of the purposes to use it is lack of free space to decompress a big file. Usually
+# decompression requires the space to hold both compressed and decompressed data untill the end of
+# decompression. Piping punch-hole-cat to decompressor frees up extra space of already read archive
+# parts during decompression.
+#
+# WARNING: It's a destructive operation - when the read have started the source file body is
+# corrupted, completely deallocated in the end, but the file itself is not deleted
+# (unless -d specified)!
+# The file must be real file, not a symlink.
+#
+# Dependencies:
+#   fallocate
+#   dd
+#   builtin stat | stat | find | ls (to get file size)
+#   builtin rm | rm (if -d specified)
+#
+#   supported filesystem:
+#     These are known to be supported (see "man fallocate" for --punch-hole for up to date info):
+#       xfs, ext4, btrfs, tmpfs, gfs2
+#
+# Syntax:
+#   punch-hole-cat [-d] FILE...
+#
+# Example:
+#   punch-hole-cat -d foo.bar.xz | xz -d -T 1 >foo.bar  #(˵^‿^˵)#
+punch-hole-cat() {
+    local _d=0 _file _file_sz _offset _skip
+    local _bs=524288  # Must be evenly divisible by 4 KiB (native system page size)
+    local -A _stat
+
+    [[ "$1" == '-d' ]] && { _d=1; shift; }
+    for _file in "$@"; do
+        [[ -f "${_file}" ]] || { echo "punch-hole-cat: File not found or not a regular file: ${_file}" >&2; return 3; }
+        [[ -L "${_file}" ]] && { echo "punch-hole-cat: Symlinks are not supported: ${_file}" >&2; return 4; }
+        [[ -s "${_file}" ]] || continue  # Ignore zero size files
+
+        _file_sz=''
+        builtin stat -A _stat "${_file}" && _file_sz=${_stat['size']}
+        if (($? || ! _file_sz )); then
+            _file_sz=$(exec -c stat -c '%s' "${_file}")
+            if (($? || ! _file_sz )); then
+                _file_sz=$(exec -c find "${_file}" -printf '%s')
+                if (($? || ! _file_sz )); then
+                    read -r _ _ _ _ _file_sz _ <<<"$(exec -c ls -dln -- "${_file}")"
+                    if (($? || ! _file_sz )); then
+                        { echo "punch-hole-cat: Failed to get size: file: ${_file}" >&2; return 7; }
+                    fi
+                fi
+            fi
+        fi
+
+        _offset=0
+        _skip=0
+        while ((_offset < _file_sz)); do
+            dd "if=${_file}" "bs=${_bs}" "skip=${_skip}" count=1 iflag=nocache status=none \
+            || { echo "punch-hole-cat: Failed to read/write: bytes: ${_bs}, skip: ${_skip}, file: ${_file}" >&2; return 8; }
+            fallocate -n -p -o "${_offset}" -l "${_bs}" "${_file}" \
+            || { echo "punch-hole-cat: Failed to punch hole: bytes: ${_bs}, offset: ${_offset}, file: ${_file}" >&2; return 9; }
+            ((_offset += _bs, _skip += 1))
+        done
+    done
+    ((_d)) && { rm -f -- "$@" || echo "punch-hole-cat: Failed to remove: $*" >&2; }
+    return 0
+}
+
